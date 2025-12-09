@@ -10,12 +10,11 @@
   ![Status](https://img.shields.io/badge/status-Live-success.svg)
   ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)
   ![Downloads](https://img.shields.io/npm/dt/aidx?style=flat-square&color=orange)
-  ![Size](https://img.shields.io/bundlephobia/min/aidx?style=flat-square&color=success)
 
   <br />
 
   <p>
-    <a href="#-quick start">Quick Start</a> •
+    <a href="#-quick-start">Quick Start</a> •
     <a href="#-how-it-works">How It Works</a> •
     <a href="#-commands">Commands</a> •
     <a href="#-features">Features</a>
@@ -77,15 +76,17 @@ Command	Description
 
 ```npx aidx copy```: Interactive file scanner & clipboard copier.
 
-```npx aidx apply```	Reads clipboard, shows diffs, and writes changes.
+```npx aidx apply```:	Reads clipboard, shows diffs, and writes changes.
 
-```npx aidx backup --on```	Enables automatic .bak files before overwriting.
+```npx aidx backup --on```:	Enables automatic .bak files before overwriting.
 
-```npx aidx backup --off```	Disables automatic backups.
+```npx aidx backup --off```:	Disables automatic backups.
 
-```npx aidx --help```	Displays help information.
+```npx aidx stl```: Shows token limits of AI model.
 
-```npx aidx -version```	Displays current version.
+```npx aidx --help```:	Displays help information.
+
+```npx aidx -version```:	Displays current version.
 
 # ✨ Features
 

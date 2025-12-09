@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { checkbox, confirm } from '@inquirer/prompts';
 import glob from 'fast-glob';
 import fs from 'fs/promises';
+import { statSync } from 'fs';
 import path from 'path';
 import clipboardy from 'clipboardy';
 import chalk from 'chalk';
@@ -21,8 +22,7 @@ const METADATA = {
 };
 
 const CONFIG_FILE = '.aidxrc.json';
-
-// Regex to detect potential secrets (OpenAI, AWS, Generic High Entropy)
+const MAX_FILE_SIZE = 1.5 * 1024 * 1024; // 1.5MB Limit
 const SECRET_REGEX = /(?:sk-[a-zA-Z0-9]{32,})|(?:AKIA[0-9A-Z]{16})|(?:[a-zA-Z0-9+/]{40,}=)/;
 
 const SYSTEM_HEADER = `
@@ -51,7 +51,7 @@ console.log("Full code here...");
 ================================================================
 `;
 
-// --- GLOBAL CTRL+C HANDLER ---
+// --- GLOBAL HANDLERS ---
 process.on('SIGINT', () => {
   console.log(chalk.yellow('\n\nOperation cancelled by user.'));
   process.exit(0);
@@ -65,14 +65,13 @@ async function getBackupStatus(): Promise<boolean> {
     const config = JSON.parse(data);
     return !!config.backup;
   } catch (e) {
-    return false; // Default to false if no config exists
+    return false;
   }
 }
 
 async function setBackupStatus(enabled: boolean) {
   const configPath = path.resolve(process.cwd(), CONFIG_FILE);
-  const config = { backup: enabled };
-  await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+  await fs.writeFile(configPath, JSON.stringify({ backup: enabled }, null, 2));
 }
 
 const program = new Command();
@@ -82,206 +81,198 @@ program
   .description(METADATA.description)
   .version(METADATA.version);
 
-// --- ROOT COMMAND (The Banner) ---
+// --- ROOT COMMAND (DASHBOARD) ---
+program.action(async () => {
+  const backupEnabled = await getBackupStatus();
+  console.log('\n' + chalk.bgBlue.bold(` ${METADATA.name.toUpperCase()} `) + chalk.dim(` v${METADATA.version}`));
+  console.log(chalk.dim('----------------------------------------'));
+  console.log(`${chalk.bold('Description:')} ${METADATA.description}`);
+  console.log(`${chalk.bold('Author:')}      ${METADATA.author}`);
+  console.log(`${chalk.bold('Backups:')}     ${backupEnabled ? chalk.green('ENABLED') : chalk.dim('DISABLED')}`);
+  console.log(`${chalk.bold('Limit:')}       1.5MB per file`);
+  console.log(chalk.dim('----------------------------------------'));
+  console.log('\nAvailable Commands:');
+  console.log(`  ${chalk.cyan('npx aidx copy')}         Select files and copy context`);
+  console.log(`  ${chalk.cyan('npx aidx apply')}        Apply AI changes to disk`);
+  console.log(`  ${chalk.cyan('npx aidx backup --on')}  Enable auto-backups`);
+  console.log(`  ${chalk.cyan('npx aidx backup --off')}  Disable auto-backups`);
+  console.log(`  ${chalk.cyan('npx aidx stl')}          Show AI token limits`);
+  console.log(`\nRun ${chalk.gray('npx aidx --help')} for details.\n`);
+});
+
+// --- COMMAND: STL (Safe Token Limits) ---
 program
-  .action(async () => {
-    const backupEnabled = await getBackupStatus();
+  .command('stl')
+  .description('Show safe token limits for AI models')
+  .action(() => {
+    console.log('\n' + chalk.bold('AI Model Context Limits (2025 Reference)'));
+    console.log(chalk.dim('--------------------------------------------------'));
     
-    console.log('\n' + chalk.bgBlue.bold(` ${METADATA.name.toUpperCase()} `) + chalk.dim(` v${METADATA.version}`));
-    console.log(chalk.dim('----------------------------------------'));
-    console.log(`${chalk.bold('Description:')} ${METADATA.description}`);
-    console.log(`${chalk.bold('Author:')}      ${METADATA.author}`);
-    console.log(`${chalk.bold('GitHub:')}      ${METADATA.github}`);
-    console.log(chalk.dim('----------------------------------------'));
-    console.log(`${chalk.bold('Backups:')}     ${backupEnabled ? chalk.green('ENABLED') : chalk.dim('DISABLED')}`);
-    console.log(chalk.dim('----------------------------------------'));
-    console.log('\nAvailable Commands:');
-    console.log(`  ${chalk.cyan('npx aidx copy')}         Select files and copy context`);
-    console.log(`  ${chalk.cyan('npx aidx apply')}        Apply AI changes to disk`);
-    console.log(`  ${chalk.cyan('npx aidx backup --on')}  Enable auto-backups`);
-    console.log(`  ${chalk.cyan('npx aidx backup --off')} Disable auto-backups`);
-    console.log(`\nRun ${chalk.gray('npx aidx --help')} for details.\n`);
+    const models = [
+      { name: "Gemini 3 Pro", limit: "2,000,000+", type: "Huge" },
+      { name: "Gemini 2.5 Flash", limit: "1,000,000+", type: "Huge" },
+      { name: "ChatGPT-5", limit: "  200,000", type: "Large" },
+      { name: "Claude 4.5 Sonnet", limit: "  200,000", type: "Large" },
+      { name: "GPT-4o", limit: "  128,000", type: "Medium" },
+      { name: "Llama 4 405B", limit: "  128,000", type: "Medium" },
+      { name: "DeepSeek V3", limit: "  128,000", type: "Medium" },
+      { name: "ChatGPT (Free)", limit: "   ~8,000", type: "Small" },
+    ];
+
+    console.log(chalk.cyan('Model Name'.padEnd(20)) + chalk.yellow('Max Tokens'.padEnd(15)) + chalk.white('Category'));
+    console.log(chalk.dim('--------------------------------------------------'));
+
+    models.forEach(m => {
+      const color = m.type === "Huge" ? chalk.green : m.type === "Large" ? chalk.blue : chalk.gray;
+      console.log(m.name.padEnd(20) + color(m.limit.padEnd(15)) + chalk.dim(m.type));
+    });
+
+    console.log(chalk.dim('--------------------------------------------------'));
+    console.log(chalk.dim('* 1,000 tokens ≈ 750 words of code/text.'));
+    console.log(chalk.dim('* Estimates based on latest model specs.\n'));
   });
 
-// --- COMMAND: BACKUP CONFIG ---
+// --- COMMAND: BACKUP ---
 program
   .command('backup')
   .description('Configure automatic backups')
-  .option('--on', 'Enable backups for this directory')
-  .option('--off', 'Disable backups for this directory')
+  .option('--on', 'Enable backups')
+  .option('--off', 'Disable backups')
   .action(async (options) => {
     if (options.on) {
       await setBackupStatus(true);
       console.log(chalk.green(`\n✔ Backups enabled. Settings saved to ${CONFIG_FILE}`));
-      console.log(chalk.dim('Original files will be saved as .bak before overwriting.'));
     } else if (options.off) {
       await setBackupStatus(false);
-      console.log(chalk.yellow(`\nBackups disabled. ${CONFIG_FILE} updated.`));
+      console.log(chalk.yellow(`\nBackups disabled.`));
     } else {
       const status = await getBackupStatus();
       console.log(`\nCurrent Backup Status: ${status ? chalk.green('ENABLED') : chalk.red('DISABLED')}`);
-      console.log(`Use ${chalk.cyan('--on')} or ${chalk.cyan('--off')} to change.`);
     }
   });
 
-// --- COMMAND: COPY ---
+// --- COMMAND: COPY (ROBUST) ---
 program
   .command('copy')
-  .description('Select files and copy to clipboard with strict AI protocol')
+  .description('Select files and copy to clipboard')
   .action(async () => {
     console.log(chalk.blue('Scanning directory...'));
 
     const files = await glob(['**/*'], {
       ignore: [
-        '**/node_modules/**', '**/dist/**', '**/build/**', '**/.next/**', 
-        '**/.git/**', '**/.vscode/**', '**/.idea/**',       
-        '**/__pycache__/**', '**/venv/**', '**/.venv/**', '**/env/**', '**/*.pyc',
-        '**/target/**', '**/bin/**', '**/obj/**', '**/vendor/**',      
-        '**/*.lock', '**/*.log', '**/*.svg', '**/*.png', '**/*.jpg', '**/*.jpeg', 
-        '**/*.gif', '**/*.ico', '**/*.pdf', '**/*.zip', '**/*.tar', '**/*.gz', '**/*.exe', '**/*.dll'
+        // Windows System Junk (CRITICAL FOR STABILITY)
+        '**/Application Data/**', '**/Cookies/**', '**/Local Settings/**', '**/Recent/**', '**/Start Menu/**',
+        // Dev Junk
+        '**/node_modules/**', '**/dist/**', '**/build/**', '**/.git/**', '**/.vscode/**', 
+        '**/__pycache__/**', '**/venv/**', '**/target/**', '**/bin/**', '**/obj/**', 
+        '**/vendor/**', 
+        // File Types
+        '**/*.lock', '**/*.log', '**/*.png', '**/*.exe', '**/*.dll', '**/*.zip', '**/*.tar', '**/*.gz'
       ],
       onlyFiles: true,
-      dot: true 
+      dot: true,
+      suppressErrors: true,      // Fixes Windows EPERM crashes
+      followSymbolicLinks: false // Fixes Infinite Loops
     });
 
-    if (files.length === 0) {
-      console.log(chalk.red('Error: No files found.'));
-      return;
-    }
+    if (files.length === 0) return console.log(chalk.red('Error: No files found.'));
 
     let selectedFiles: string[] = [];
-    
     try {
       selectedFiles = await checkbox({
         message: 'Select files to send to AI:',
         choices: files.map(f => ({ name: f, value: f })),
-        pageSize: 15,
-        loop: false,
+        pageSize: 15, loop: false,
       });
-    } catch (error) {
-      console.log(chalk.yellow('\nSelection cancelled.'));
-      return;
-    }
+    } catch (e) { return console.log(chalk.yellow('\nSelection cancelled.')); }
 
-    if (selectedFiles.length === 0) {
-      console.log(chalk.yellow('No files selected.'));
-      return;
-    }
+    if (selectedFiles.length === 0) return console.log(chalk.yellow('No files selected.'));
 
     let output = SYSTEM_HEADER + "\n";
     let skippedCount = 0;
     
     console.log(chalk.dim('Reading files...'));
-
     for (const file of selectedFiles) {
       try {
-        const isBinary = await isBinaryFile(file);
-        
-        if (isBinary) {
+        // 1. Check Size
+        const stats = statSync(file);
+        if (stats.size > MAX_FILE_SIZE) {
+            console.log(chalk.yellow(`⚠ Skipped large file (>1.5MB): ${file}`));
+            skippedCount++; continue;
+        }
+        // 2. Check Binary
+        if (await isBinaryFile(file)) {
             console.log(chalk.yellow(`⚠ Skipped binary file: ${file}`));
-            skippedCount++;
-            continue;
+            skippedCount++; continue;
         }
 
         const content = await fs.readFile(file, 'utf-8');
 
-        // --- SECURITY CHECK ---
+        // 3. Check Secrets
         if (file.includes('.env') || SECRET_REGEX.test(content)) {
-            console.log(chalk.red(`\n🛑 SECURITY ALERT: Secrets detected in ${file}`));
-            console.log(chalk.red('   Skipping this file to protect your keys.'));
-            skippedCount++;
-            continue;
+            console.log(chalk.red(`\nSECURITY ALERT: Secrets detected in ${file}`));
+            skippedCount++; continue;
         }
 
         output += `File: ${file}\n\`\`\`\n${content}\n\`\`\`\n\n`;
-      } catch (e) {
-        console.log(chalk.red(`Error reading ${file}`));
-      }
+      } catch (e) { console.log(chalk.red(`Error reading ${file}`)); }
     }
-
     output += XML_SCHEMA_INSTRUCTION;
 
     try {
       await clipboardy.write(output);
       const tokens = encode(output).length;
+      const finalCount = selectedFiles.length - skippedCount;
       const tokenColor = tokens > 100000 ? chalk.red : tokens > 30000 ? chalk.yellow : chalk.green;
       
-      const finalCount = selectedFiles.length - skippedCount;
       console.log(chalk.green(`\n✔ Copied ${finalCount} files to clipboard`));
+      console.log(`Estimated Tokens: ${tokenColor(tokens.toLocaleString())}`);
       
-      console.log(`Estimated Tokens: ${tokenColor(tokens)}`);
-      console.log(chalk.cyan('Ready!'));
-    } catch (e) {
-      console.log(chalk.red('Clipboard write failed.'));
+    } catch (e) { 
+        console.log(chalk.red('Clipboard write failed (File too large for OS).')); 
+        console.log(chalk.dim('Try selecting fewer files.'));
     }
   });
 
 // --- COMMAND: APPLY ---
 program
   .command('apply')
-  .description('Read clipboard and safely apply changes')
+  .description('Apply AI changes from clipboard')
   .action(async () => {
-    // 1. Check Backup Config
     const backupsEnabled = await getBackupStatus();
-
     console.log(chalk.dim('Reading clipboard...'));
     let content;
-    
-    try {
-      content = await clipboardy.read();
-    } catch (e) {
-      console.log(chalk.red('Error: Could not read clipboard.'));
-      return;
-    }
+    try { content = await clipboardy.read(); } catch (e) { return console.log(chalk.red('Error: Could not read clipboard.')); }
 
     const cleanedContent = content.replace(/```xml/g, '').replace(/```/g, '');
-
     const fileRegex = /<file\s+path=["'](.*?)["']\s*>([\s\S]*?)<\/file>/gi;
     const deleteRegex = /<delete\s+path=["'](.*?)["']\s*\/>/gi;
-
     const updates: { type: 'write' | 'delete', path: string, content?: string }[] = [];
     let match;
 
-    while ((match = fileRegex.exec(cleanedContent)) !== null) {
-      updates.push({ type: 'write', path: match[1], content: match[2].trim() });
-    }
-    while ((match = deleteRegex.exec(cleanedContent)) !== null) {
-      updates.push({ type: 'delete', path: match[1] });
-    }
+    while ((match = fileRegex.exec(cleanedContent)) !== null) updates.push({ type: 'write', path: match[1], content: match[2].trim() });
+    while ((match = deleteRegex.exec(cleanedContent)) !== null) updates.push({ type: 'delete', path: match[1] });
 
-    if (updates.length === 0) {
-      console.log(chalk.red('\nNo valid XML tags found.'));
-      console.log(chalk.dim('Tip: Ensure the AI used the <file> format provided.'));
-      return;
-    }
+    if (updates.length === 0) return console.log(chalk.red('\nNo valid XML tags found.'));
 
     console.log(chalk.bold(`\nFound ${updates.length} pending change(s):\n`));
-
     for (const update of updates) {
       const targetPath = path.resolve(process.cwd(), update.path);
       console.log(chalk.bgBlue.white(` ${update.path} `));
-
       if (update.type === 'delete') {
         console.log(chalk.bgRed.white(' [DELETE] '));
       } else {
         let originalContent = '';
-        let fileExists = false;
-        try {
-          originalContent = await fs.readFile(targetPath, 'utf-8');
-          fileExists = true;
-        } catch (e) {
-          console.log(chalk.bgGreen.black(' [NEW FILE] '));
-        }
-
-        if (fileExists && update.content !== undefined) {
+        try { originalContent = await fs.readFile(targetPath, 'utf-8'); } catch (e) { console.log(chalk.bgGreen.black(' [NEW FILE] ')); }
+        if (originalContent && update.content !== undefined) {
           const changes = Diff.diffLines(originalContent, update.content);
-          let changesCount = 0;
+          let count = 0;
           changes.forEach((part) => {
-            if (changesCount > 50) return;
-            if (part.added) { process.stdout.write(chalk.green(part.value.replace(/^/gm, '+ '))); changesCount++; }
-            else if (part.removed) { process.stdout.write(chalk.red(part.value.replace(/^/gm, '- '))); changesCount++; }
+            if (count > 50) return;
+            if (part.added) { process.stdout.write(chalk.green(part.value.replace(/^/gm, '+ '))); count++; }
+            else if (part.removed) { process.stdout.write(chalk.red(part.value.replace(/^/gm, '- '))); count++; }
           });
-          if (changesCount > 50) console.log(chalk.dim('... (diff truncated)'));
+          if (count > 50) console.log(chalk.dim('...'));
           console.log('');
         }
       }
@@ -289,68 +280,33 @@ program
     }
 
     let proceed = false;
-    try {
-        proceed = await confirm({ message: 'Apply these changes to disk?' });
-    } catch (error) {
-        console.log(chalk.yellow('\nConfirmation cancelled.'));
-        return;
-    }
-
-    if (!proceed) {
-      console.log(chalk.yellow('Aborted.'));
-      return;
-    }
+    try { proceed = await confirm({ message: 'Apply these changes to disk?' }); } catch (e) { return; }
+    if (!proceed) return console.log(chalk.yellow('Aborted.'));
 
     console.log('');
     for (const update of updates) {
       const targetPath = path.resolve(process.cwd(), update.path);
       try {
         if (update.type === 'delete') {
-            try {
-              // Create backup before delete if enabled
-              if (backupsEnabled) {
-                 await fs.access(targetPath); // ensure it exists first
-                 await fs.copyFile(targetPath, `${targetPath}.bak`);
-                 console.log(chalk.gray(`(Backup saved to ${path.basename(targetPath)}.bak)`));
-              }
-              await fs.access(targetPath);
-              await fs.unlink(targetPath);
-              console.log(chalk.gray(`Deleted ${update.path}`));
-            } catch (err: any) {
-              if (err.code === 'ENOENT') {
-                console.log(chalk.gray(`Skipped delete (File not found): ${update.path}`));
-              } else {
-                throw err;
-              }
-            }
+             if (backupsEnabled) {
+                 try { await fs.copyFile(targetPath, `${targetPath}.bak`); } catch(e) {}
+             }
+             try { await fs.unlink(targetPath); console.log(chalk.gray(`Deleted ${update.path}`)); } catch(e) {}
         } else {
             await fs.mkdir(path.dirname(targetPath), { recursive: true });
-            
-            // --- BACKUP LOGIC ---
             if (backupsEnabled) {
-                try {
-                    await fs.access(targetPath); // Check if file exists
-                    await fs.copyFile(targetPath, `${targetPath}.bak`);
-                    console.log(chalk.gray(`(Backup saved to ${path.basename(targetPath)}.bak)`));
-                } catch (e) {
-                    // File didn't exist, no backup needed
-                }
+                try { await fs.copyFile(targetPath, `${targetPath}.bak`); console.log(chalk.gray(`(Backup saved)`)); } catch(e) {}
             }
-
             await fs.writeFile(targetPath, update.content || '');
             console.log(chalk.green(`✔ Wrote ${update.path}`));
         }
-      } catch (e: any) {
-        console.log(chalk.bgRed.white(` ERROR `) + ` ${update.path}: ${e.message}`);
-      }
+      } catch (e: any) { console.log(chalk.bgRed.white(` ERROR `) + ` ${update.path}: ${e.message}`); }
     }
     console.log(chalk.cyan('\nDone.'));
   });
 
-// --- UNKNOWN COMMAND HANDLER ---
 program.on('command:*', (operands) => {
   console.error(chalk.red(`\nError: Unknown command '${operands[0]}'`));
-  console.log(`See ${chalk.cyan('npx aidx --help')} for list of available commands.\n`);
   process.exit(1);
 });
 
