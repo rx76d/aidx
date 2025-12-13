@@ -16,7 +16,7 @@ const METADATA = {
   name: "aidx",
   description: "A CLI bridge between local code and LLMs.",
   author: "rx76d",
-  version: "",
+  version: "1.0.1",
   license: "MIT",
   github: "https://github.com/rx76d/aidx"
 };
