@@ -109,15 +109,34 @@ program
     console.log(chalk.dim('--------------------------------------------------'));
     
     const models = [
-      { name: "Gemini 3 Pro", limit: "2,000,000+", type: "Huge" },
-      { name: "Gemini 2.5 Flash", limit: "1,000,000+", type: "Huge" },
-      { name: "ChatGPT-5", limit: "  200,000", type: "Large" },
-      { name: "Claude 4.5 Sonnet", limit: "  200,000", type: "Large" },
-      { name: "GPT-4o", limit: "  128,000", type: "Medium" },
-      { name: "Llama 4 405B", limit: "  128,000", type: "Medium" },
-      { name: "DeepSeek V3", limit: "  128,000", type: "Medium" },
-      { name: "ChatGPT (Free)", limit: "   ~8,000", type: "Small" },
+      // HUGE (≈ 1M+ tokens)
+      { name: "Gemini 3 Pro",         limit: "2,000,000+", type: "Huge" },
+      { name: "Gemini 2.5 Pro",       limit: "1,000,000+", type: "Huge" },
+      { name: "Gemini 2.5 Flash",     limit: "1,000,000+", type: "Huge" },
+      { name: "Llama 4 Scout",        limit: "1,000,000+", type: "Huge" },
+      { name: "Llama 4 Maverick",     limit: "1,000,000+", type: "Huge" },
+      { name: "Qwen 2.5 1M",          limit: "1,000,000+", type: "Huge" },
+      { name: "GPT-4.1",              limit: "1,000,000+", type: "Huge" },
+
+      // LARGE (≈ 200K–500K tokens)
+      { name: "ChatGPT-5",            limit: "200,000+",   type: "Large" },
+      { name: "Claude 4.5 Sonnet",    limit: "200,000+",   type: "Large" },
+      { name: "Claude 4.5 Opus",      limit: "200,000+",   type: "Large" },
+      { name: "Grok 4",               limit: "256,000",    type: "Large" },
+      { name: "Cohere Command A",     limit: "256,000",    type: "Large" },
+
+      // MEDIUM (≈ 100K–150K tokens)
+      { name: "GPT-4o",               limit: "128,000",    type: "Medium" },
+      { name: "Llama 4 405B",         limit: "128,000",    type: "Medium" },
+      { name: "DeepSeek V3",          limit: "128,000",    type: "Medium" },
+      { name: "Grok 3",               limit: "128,000",    type: "Medium" },
+      { name: "GPT-5 Mini",           limit: "128,000",    type: "Medium" },
+
+      // SMALL (< 50K tokens)
+      { name: "ChatGPT (Free)",       limit: "~8,000",     type: "Small" },
+      { name: "Claude Haiku",         limit: "~16,000",    type: "Small" },
     ];
+
 
     console.log(chalk.cyan('Model Name'.padEnd(20)) + chalk.yellow('Max Tokens'.padEnd(15)) + chalk.white('Category'));
     console.log(chalk.dim('--------------------------------------------------'));
