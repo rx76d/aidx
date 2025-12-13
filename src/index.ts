@@ -7,16 +7,14 @@ import { statSync } from 'fs';
 import path from 'path';
 import clipboardy from 'clipboardy';
 import chalk from 'chalk';
-import { encode } from 'gpt-tokenizer';
 import * as Diff from 'diff';
-import { isBinaryFile } from 'isbinaryfile';
 
 // --- CONFIGURATION ---
 const METADATA = {
   name: "aidx",
   description: "A CLI bridge between local code and LLMs.",
   author: "rx76d",
-  version: "1.0.2",
+  version: "1.0.3",
   license: "MIT",
   github: "https://github.com/rx76d/aidx"
 };
@@ -51,6 +49,25 @@ console.log("Full code here...");
 ================================================================
 `;
 
+// --- UTILS: ZERO-DEPENDENCY HELPERS ---
+
+// 1. Token Estimator (1 token ~= 4 chars in Code)
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+// 2. Binary Detector (Checks for null bytes in first 1KB)
+function isBinary(buffer: Buffer): boolean {
+  // If file is empty, it's text safe
+  if (buffer.length === 0) return false;
+  // Check first 1000 bytes for a null byte (common in images/binaries)
+  const len = Math.min(buffer.length, 1000);
+  for (let i = 0; i < len; i++) {
+    if (buffer[i] === 0x00) return true;
+  }
+  return false;
+}
+
 // --- GLOBAL HANDLERS ---
 process.on('SIGINT', () => {
   console.log(chalk.yellow('\n\nOperation cancelled by user.'));
@@ -81,7 +98,7 @@ program
   .description(METADATA.description)
   .version(METADATA.version);
 
-// --- ROOT COMMAND (DASHBOARD) ---
+// --- ROOT COMMAND ---
 program.action(async () => {
   const backupEnabled = await getBackupStatus();
   console.log('\n' + chalk.bgBlue.bold(` ${METADATA.name.toUpperCase()} `) + chalk.dim(` v${METADATA.version}`));
@@ -95,7 +112,7 @@ program.action(async () => {
   console.log(`  ${chalk.cyan('npx aidx copy')}         Select files and copy context`);
   console.log(`  ${chalk.cyan('npx aidx apply')}        Apply AI changes to disk`);
   console.log(`  ${chalk.cyan('npx aidx backup --on')}  Enable auto-backups`);
-  console.log(`  ${chalk.cyan('npx aidx backup --off')}  Disable auto-backups`);
+  console.log(`  ${chalk.cyan('npx aidx backup --off')} Disable auto-backups`);
   console.log(`  ${chalk.cyan('npx aidx stl')}          Show AI token limits`);
   console.log(`\nRun ${chalk.gray('npx aidx --help')} for details.\n`);
 });
@@ -137,7 +154,6 @@ program
       { name: "Claude Haiku",         limit: "~16,000",    type: "Small" },
     ];
 
-
     console.log(chalk.cyan('Model Name'.padEnd(20)) + chalk.yellow('Max Tokens'.padEnd(15)) + chalk.white('Category'));
     console.log(chalk.dim('--------------------------------------------------'));
 
@@ -170,7 +186,7 @@ program
     }
   });
 
-// --- COMMAND: COPY (ROBUST) ---
+// --- COMMAND: COPY (FAST) ---
 program
   .command('copy')
   .description('Select files and copy to clipboard')
@@ -179,19 +195,15 @@ program
 
     const files = await glob(['**/*'], {
       ignore: [
-        // Windows System Junk (CRITICAL FOR STABILITY)
         '**/Application Data/**', '**/Cookies/**', '**/Local Settings/**', '**/Recent/**', '**/Start Menu/**',
-        // Dev Junk
         '**/node_modules/**', '**/dist/**', '**/build/**', '**/.git/**', '**/.vscode/**', 
         '**/__pycache__/**', '**/venv/**', '**/target/**', '**/bin/**', '**/obj/**', 
-        '**/vendor/**', 
-        // File Types
-        '**/*.lock', '**/*.log', '**/*.png', '**/*.exe', '**/*.dll', '**/*.zip', '**/*.tar', '**/*.gz'
+        '**/vendor/**', '**/*.lock', '**/*.log', '**/*.png', '**/*.exe', '**/*.dll', '**/*.zip', '**/*.tar', '**/*.gz'
       ],
       onlyFiles: true,
       dot: true,
-      suppressErrors: true,      // Fixes Windows EPERM crashes
-      followSymbolicLinks: false // Fixes Infinite Loops
+      suppressErrors: true,     
+      followSymbolicLinks: false 
     });
 
     if (files.length === 0) return console.log(chalk.red('Error: No files found.'));
@@ -213,23 +225,24 @@ program
     console.log(chalk.dim('Reading files...'));
     for (const file of selectedFiles) {
       try {
-        // 1. Check Size
         const stats = statSync(file);
         if (stats.size > MAX_FILE_SIZE) {
             console.log(chalk.yellow(`⚠ Skipped large file (>1.5MB): ${file}`));
             skippedCount++; continue;
         }
-        // 2. Check Binary
-        if (await isBinaryFile(file)) {
+
+        // Optimized Read: Read buffer first to check binary, then convert to string
+        const buffer = await fs.readFile(file);
+        
+        if (isBinary(buffer)) {
             console.log(chalk.yellow(`⚠ Skipped binary file: ${file}`));
             skippedCount++; continue;
         }
 
-        const content = await fs.readFile(file, 'utf-8');
+        const content = buffer.toString('utf-8');
 
-        // 3. Check Secrets
         if (file.includes('.env') || SECRET_REGEX.test(content)) {
-            console.log(chalk.red(`\nSECURITY ALERT: Secrets detected in ${file}`));
+            console.log(chalk.red(`\n🛑 SECURITY ALERT: Secrets detected in ${file}`));
             skippedCount++; continue;
         }
 
@@ -240,7 +253,8 @@ program
 
     try {
       await clipboardy.write(output);
-      const tokens = encode(output).length;
+      // LIGHTWEIGHT TOKENIZER USAGE
+      const tokens = estimateTokens(output);
       const finalCount = selectedFiles.length - skippedCount;
       const tokenColor = tokens > 100000 ? chalk.red : tokens > 30000 ? chalk.yellow : chalk.green;
       
@@ -248,7 +262,7 @@ program
       console.log(`Estimated Tokens: ${tokenColor(tokens.toLocaleString())}`);
       
     } catch (e) { 
-        console.log(chalk.red('Clipboard write failed (File too large for OS).')); 
+        console.log(chalk.red('❌ Clipboard write failed (File too large for OS).')); 
         console.log(chalk.dim('Try selecting fewer files.'));
     }
   });

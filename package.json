@@ -1,11 +1,11 @@
 {
   "name": "aidx",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A CLI bridge between local code and LLMs. Copy context to clipboard and apply AI changes safely with diffs.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "aidx": "dist/index.js"
+    "aidx": "./dist/index.js"
   },
   "files": [
     "dist",
@@ -48,9 +48,7 @@
     "clipboardy": "^4.0.0",
     "commander": "^12.0.0",
     "diff": "^5.2.0",
-    "fast-glob": "^3.3.2",
-    "gpt-tokenizer": "^2.1.2",
-    "isbinaryfile": "^5.0.2"
+    "fast-glob": "^3.3.2"
   },
   "devDependencies": {
     "@types/diff": "^5.0.9",
