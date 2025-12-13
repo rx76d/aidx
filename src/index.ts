@@ -106,7 +106,6 @@ program.action(async () => {
   console.log(`${chalk.bold('Description:')} ${METADATA.description}`);
   console.log(`${chalk.bold('Author:')}      ${METADATA.author}`);
   console.log(`${chalk.bold('Backups:')}     ${backupEnabled ? chalk.green('ENABLED') : chalk.dim('DISABLED')}`);
-  console.log(`${chalk.bold('Limit:')}       1.5MB per file`);
   console.log(chalk.dim('----------------------------------------'));
   console.log('\nAvailable Commands:');
   console.log(`  ${chalk.cyan('npx aidx copy')}         Select files and copy context`);

@@ -90,25 +90,25 @@ Command	Description
 
 # ✨ Features
 
-🛡️ **Security Guard**
+🛡️ **Security Guard**:
 Automatically detects and blocks API keys (AWS, OpenAI, Stripe) from being copied to the clipboard. If a file looks like a secret, it is skipped.
 
-💾 **Automatic Backups**
+💾 **Automatic Backups**:
 Don't trust the AI completely? Turn on backups.
 ```npx aidx backup --on```
 Before src/App.tsx is updated, aidx will save a copy to src/App.tsx.bak.
 
-🌍 **Universal Support**
+🌍 **Universal Support**:
 Works with almost any text-based language:
 Web: TS, JS, HTML, CSS, Svelte, Vue, JSX
 Backend: Python, Go, Rust, Java, C#, PHP
 Config: JSON, YAML, TOML, SQL, Markdown
 Smart Ignores: Automatically ignores node_modules, .git, __pycache__, venv, target, bin, and binary files (.png, .exe).
 
-📊 **Token Awareness**
+📊 **Token Awareness**:
 Calculates estimated token usage before you paste, so you know if you are about to exceed the limits of GPT-5 or Claude 3.5.
 
-🛡️ **License**
+🛡️ **License**:
 This project is open source and available under the MIT License.
 <div align="center">
 <sub>Developed by rx76d</sub>
