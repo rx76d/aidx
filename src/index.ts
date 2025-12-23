@@ -3,7 +3,7 @@ import { checkbox, confirm } from '@inquirer/prompts';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, exec } from 'child_process';
 import * as Diff from 'diff';
 
 // --- CONFIGURATION ---
@@ -11,7 +11,7 @@ const METADATA = {
   name: "aidx",
   description: "A CLI bridge between local code and LLMs.",
   author: "rx76d",
-  version: "1.0.4",
+  version: "1.0.4", // Version 1.0.4 (No Change)
   license: "MIT",
   github: "https://github.com/rx76d/aidx"
 };
@@ -35,7 +35,7 @@ const colors = {
   bgGreen: (t: string) => `\x1b[42m\x1b[30m${t}\x1b[0m`
 };
 
-// --- UTILS: NATIVE CLIPBOARD (Zero Dependencies) ---
+// --- UTILS: NATIVE CLIPBOARD (Zero Dependencies - Robust) ---
 async function writeClipboard(text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const platform = process.platform;
@@ -43,36 +43,37 @@ async function writeClipboard(text: string): Promise<void> {
     let args: string[] = [];
 
     if (platform === 'win32') {
-      cmd = 'clip';
+      // Try powershell first, then clip.exe
+      try {
+        execSync('powershell -command "Set-Clipboard -Value \\"$Input\\""', { input: text, stdio: 'pipe' });
+        return resolve();
+      } catch (e) {
+        // Fallback to clip.exe
+        cmd = 'clip';
+      }
     } else if (platform === 'darwin') {
       cmd = 'pbcopy';
     } else {
-      // Linux: Try wl-copy (Wayland) first, then xclip (X11)
+      // Linux: Try wl-copy (Wayland) then xclip (X11)
       try {
         const child = spawn('wl-copy');
         child.stdin.write(text);
         child.stdin.end();
-        child.on('error', () => {}); // Ignore error to try fallback
-        child.on('close', (code) => {
-            if (code === 0) resolve();
-            else throw new Error(); // Trigger fallback
-        });
-        return; // Return if spawn didn't throw immediately
+        child.on('error', () => { /* ignore error to try fallback */ }); 
+        child.on('close', (code) => { if (code === 0) resolve(); else throw new Error(); }); // Trigger fallback
+        return;
       } catch {
-        // Fallback to xclip
+        cmd = 'xclip'; args = ['-selection', 'clipboard', '-in'];
       }
-      cmd = 'xclip';
-      args = ['-selection', 'clipboard', '-in'];
     }
 
+    if (!cmd) return reject(new Error('No clipboard tool found (On Linux, install xclip or wl-clipboard)'));
+
     const child = spawn(cmd, args);
-    
     child.on('error', (err) => {
-      // Friendly error for Linux users missing tools
-      if (platform === 'linux') reject(new Error('Install xclip or wl-copy'));
+      if (platform === 'linux') reject(new Error('Install xclip or wl-clipboard'));
       else reject(err);
     });
-
     child.stdin.write(text);
     child.stdin.end();
     child.on('close', () => resolve());
@@ -83,16 +84,23 @@ async function readClipboard(): Promise<string> {
   const platform = process.platform;
   try {
     if (platform === 'win32') {
-      return execSync('powershell -command "Get-Clipboard"').toString().trim();
+      // Try powershell first
+      try {
+        return execSync('powershell -command "Get-Clipboard"').toString().trim();
+      } catch (e) {
+        // Fallback: Use cmd's built-in paste, often less reliable but avoids powershell dependency
+        // This is tricky on Windows command line, direct reading might not work as cleanly as writing.
+        // For reading, powershell is usually the most robust. If it fails, the user likely needs to fix their PATH.
+        throw new Error("PowerShell not found. Please ensure PowerShell is in your system PATH or use a PowerShell terminal.");
+      }
     } else if (platform === 'darwin') {
       return execSync('pbpaste').toString();
     } else {
-      // Linux: Try Wayland then X11
       try { return execSync('wl-paste').toString(); } 
       catch { return execSync('xclip -selection clipboard -out').toString(); }
     }
-  } catch (e) {
-    throw new Error('Clipboard read failed. (On Linux, install xclip or wl-clipboard)');
+  } catch (e: any) {
+    throw new Error(`Clipboard read failed: ${e.message || 'Unknown error'}. (On Linux, install xclip or wl-clipboard)`);
   }
 }
 
@@ -114,6 +122,7 @@ async function scanFiles(startDir: string): Promise<string[]> {
   async function walk(dir: string) {
     try {
       const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+      
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
         
@@ -126,7 +135,9 @@ async function scanFiles(startDir: string): Promise<string[]> {
           }
         }
       }
-    } catch (e) { /* Suppress EPERM */ }
+    } catch (e) {
+      // Suppress EPERM errors
+    }
   }
 
   await walk(startDir);
@@ -147,13 +158,15 @@ function isBinary(buffer: Buffer): boolean {
 
 async function getBackupStatus(): Promise<boolean> {
   try {
-    const data = await fsPromises.readFile(path.resolve(process.cwd(), CONFIG_FILE), 'utf-8');
+    const configPath = path.resolve(process.cwd(), CONFIG_FILE);
+    const data = await fsPromises.readFile(configPath, 'utf-8');
     return !!JSON.parse(data).backup;
   } catch { return false; }
 }
 
 async function setBackupStatus(enabled: boolean) {
-  await fsPromises.writeFile(path.resolve(process.cwd(), CONFIG_FILE), JSON.stringify({ backup: enabled }, null, 2));
+  const configPath = path.resolve(process.cwd(), CONFIG_FILE);
+  await fsPromises.writeFile(configPath, JSON.stringify({ backup: enabled }, null, 2));
 }
 
 // --- PROTOCOLS ---
@@ -277,14 +290,14 @@ async function runCopy() {
   const files = await scanFiles(process.cwd());
   if (files.length === 0) return console.log(colors.red('Error: No files found.'));
 
-  let selectedFiles;
+  let selectedFiles: string[] = [];
   try {
     selectedFiles = await checkbox({
       message: 'Select files to send to AI:',
       choices: files.map(f => ({ name: f, value: f })),
       pageSize: 15, loop: false,
     });
-  } catch { return console.log(colors.yellow('\nSelection cancelled.')); }
+  } catch (e) { return console.log(colors.yellow('\nSelection cancelled.')); }
 
   if (selectedFiles.length === 0) return console.log(colors.yellow('No files selected.'));
 
@@ -308,7 +321,7 @@ async function runCopy() {
 
       const content = buffer.toString('utf-8');
       if (file.includes('.env') || SECRET_REGEX.test(content)) {
-          console.log(colors.red(`\nSECURITY ALERT: Secrets detected in ${file}`));
+          console.log(colors.red(`\n🛑 SECURITY ALERT: Secrets detected in ${file}`));
           skippedCount++; continue;
       }
 
@@ -326,7 +339,8 @@ async function runCopy() {
     console.log(colors.green(`\n✔ Copied ${finalCount} files to clipboard`));
     console.log(`Estimated Tokens: ${tokenColor(tokens.toLocaleString())}`);
   } catch (e) { 
-      console.log(colors.red('Clipboard write failed (File too large for OS or tool missing).')); 
+      console.log(colors.red(`❌ Clipboard write failed: ${e instanceof Error ? e.message : 'Unknown error'}.`)); 
+      console.log(colors.dim('Try selecting fewer files or ensure clipboard tools (xclip/wl-copy on Linux) are installed.'));
   }
 }
 
@@ -334,7 +348,11 @@ async function runApply() {
   const backupsEnabled = await getBackupStatus();
   console.log(colors.dim('Reading clipboard...'));
   let content;
-  try { content = await readClipboard(); } catch (e) { return console.log(colors.red('Error: Could not read clipboard.')); }
+  try { content = await readClipboard(); } catch (e) { 
+      console.log(colors.red(`Error: Could not read clipboard: ${e instanceof Error ? e.message : 'Unknown error'}.`)); 
+      console.log(colors.dim('Ensure clipboard tools (xclip/wl-paste on Linux, PowerShell on Windows) are installed.'));
+      return; 
+  }
 
   const cleanedContent = content.replace(/```xml/g, '').replace(/```/g, '');
   const fileRegex = /<file\s+path=["'](.*?)["']\s*>([\s\S]*?)<\/file>/gi;
