@@ -3,7 +3,7 @@ import { checkbox, confirm } from '@inquirer/prompts';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
-import clipboardy from 'clipboardy'; // Restored
+import clipboardy from 'clipboardy';
 import * as Diff from 'diff';
 
 // --- CONFIGURATION ---
