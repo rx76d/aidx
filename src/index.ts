@@ -3,7 +3,7 @@ import { checkbox, confirm } from '@inquirer/prompts';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
-import clipboardy from 'clipboardy';
+import { spawn, execSync } from 'child_process';
 import * as Diff from 'diff';
 
 // --- CONFIGURATION ---
@@ -20,7 +20,7 @@ const CONFIG_FILE = '.aidxrc.json';
 const MAX_FILE_SIZE = 1.5 * 1024 * 1024; // 1.5MB Limit
 const SECRET_REGEX = /(?:sk-[a-zA-Z0-9]{32,})|(?:AKIA[0-9A-Z]{16})|(?:[a-zA-Z0-9+/]{40,}=)/;
 
-// --- UTILS: NATIVE COLORS (Replaces Chalk) ---
+// --- UTILS: NATIVE COLORS ---
 const colors = {
   reset: "\x1b[0m",
   red: (t: string) => `\x1b[31m${t}\x1b[0m`,
@@ -35,17 +35,76 @@ const colors = {
   bgGreen: (t: string) => `\x1b[42m\x1b[30m${t}\x1b[0m`
 };
 
-// --- UTILS: NATIVE FILE SCANNER (Replaces fast-glob) ---
-// This recursively walks directories but explicitly skips ignored folders for speed.
+// --- UTILS: NATIVE CLIPBOARD (Zero Dependencies) ---
+async function writeClipboard(text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const platform = process.platform;
+    let cmd = '';
+    let args: string[] = [];
+
+    if (platform === 'win32') {
+      cmd = 'clip';
+    } else if (platform === 'darwin') {
+      cmd = 'pbcopy';
+    } else {
+      // Linux: Try wl-copy (Wayland) first, then xclip (X11)
+      try {
+        const child = spawn('wl-copy');
+        child.stdin.write(text);
+        child.stdin.end();
+        child.on('error', () => {}); // Ignore error to try fallback
+        child.on('close', (code) => {
+            if (code === 0) resolve();
+            else throw new Error(); // Trigger fallback
+        });
+        return; // Return if spawn didn't throw immediately
+      } catch {
+        // Fallback to xclip
+      }
+      cmd = 'xclip';
+      args = ['-selection', 'clipboard', '-in'];
+    }
+
+    const child = spawn(cmd, args);
+    
+    child.on('error', (err) => {
+      // Friendly error for Linux users missing tools
+      if (platform === 'linux') reject(new Error('Install xclip or wl-copy'));
+      else reject(err);
+    });
+
+    child.stdin.write(text);
+    child.stdin.end();
+    child.on('close', () => resolve());
+  });
+}
+
+async function readClipboard(): Promise<string> {
+  const platform = process.platform;
+  try {
+    if (platform === 'win32') {
+      // PowerShell is the reliable way to read on Windows without extra tools
+      return execSync('powershell -command "Get-Clipboard"').toString().trim();
+    } else if (platform === 'darwin') {
+      return execSync('pbpaste').toString();
+    } else {
+      // Linux: Try Wayland then X11
+      try { return execSync('wl-paste').toString(); } 
+      catch { return execSync('xclip -selection clipboard -out').toString(); }
+    }
+  } catch (e) {
+    throw new Error('Clipboard read failed. (On Linux, install xclip or wl-clipboard)');
+  }
+}
+
+// --- UTILS: NATIVE FILE SCANNER ---
 async function scanFiles(startDir: string): Promise<string[]> {
-  // Folders to strictly ignore (matches v1.0.3 behavior)
   const ignoredFolders = new Set([
     'node_modules', '.git', '.vscode', '.idea', 'dist', 'build', '.next', 
     '__pycache__', 'venv', 'env', '.venv', 'target', 'bin', 'obj', 'vendor', 
     'Application Data', 'Cookies', 'Local Settings', 'Recent', 'Start Menu'
   ]);
   
-  // Extensions to ignore
   const ignoredExts = new Set([
     '.lock', '.log', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', 
     '.pdf', '.zip', '.tar', '.gz', '.exe', '.dll', '.iso', '.class', '.pyc'
@@ -56,26 +115,19 @@ async function scanFiles(startDir: string): Promise<string[]> {
   async function walk(dir: string) {
     try {
       const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-      
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
         
         if (entry.isDirectory()) {
-          // Optimization: Don't enter ignored folders
-          if (!ignoredFolders.has(entry.name)) {
-            await walk(fullPath);
-          }
+          if (!ignoredFolders.has(entry.name)) await walk(fullPath);
         } else {
           const ext = path.extname(entry.name).toLowerCase();
           if (!ignoredExts.has(ext)) {
-            // Store relative path
             results.push(path.relative(startDir, fullPath));
           }
         }
       }
-    } catch (e) {
-      // Suppress permission errors (EPERM) just like suppressErrors: true
-    }
+    } catch (e) { /* Suppress EPERM */ }
   }
 
   await walk(startDir);
@@ -96,17 +148,13 @@ function isBinary(buffer: Buffer): boolean {
 
 async function getBackupStatus(): Promise<boolean> {
   try {
-    const configPath = path.resolve(process.cwd(), CONFIG_FILE);
-    const data = await fsPromises.readFile(configPath, 'utf-8');
+    const data = await fsPromises.readFile(path.resolve(process.cwd(), CONFIG_FILE), 'utf-8');
     return !!JSON.parse(data).backup;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 async function setBackupStatus(enabled: boolean) {
-  const configPath = path.resolve(process.cwd(), CONFIG_FILE);
-  await fsPromises.writeFile(configPath, JSON.stringify({ backup: enabled }, null, 2));
+  await fsPromises.writeFile(path.resolve(process.cwd(), CONFIG_FILE), JSON.stringify({ backup: enabled }, null, 2));
 }
 
 // --- PROTOCOLS ---
@@ -136,34 +184,18 @@ console.log("Full code here...");
 ================================================================
 `;
 
-// --- MAIN CLI LOGIC (Replaces Commander) ---
+// --- MAIN CLI LOGIC ---
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || 'menu'; 
 
-  // Router
   switch (command) {
-    case 'copy':
-      await runCopy();
-      break;
-    case 'apply':
-      await runApply();
-      break;
-    case 'backup':
-      await runBackup(args[1]);
-      break;
-    case 'stl':
-      runSTL();
-      break;
-    case 'menu':
-    case '--help':
-    case '-h':
-      await showMenu();
-      break;
-    case '-v':
-    case '--version':
-      console.log(METADATA.version);
-      break;
+    case 'copy': await runCopy(); break;
+    case 'apply': await runApply(); break;
+    case 'backup': await runBackup(args[1]); break;
+    case 'stl': runSTL(); break;
+    case 'menu': case '--help': case '-h': await showMenu(); break;
+    case '-v': case '--version': console.log(METADATA.version); break;
     default:
       console.log(colors.red(`\nError: Unknown command '${command}'`));
       console.log(`Run ${colors.cyan('npx aidx')} for help.\n`);
@@ -195,7 +227,6 @@ function runSTL() {
   console.log(colors.dim('--------------------------------------------------'));
   
   const models = [
-    // HUGE (≈ 1M+ tokens)
     { name: "Gemini 3 Pro",         limit: "2,000,000+", type: "Huge" },
     { name: "Gemini 2.5 Pro",       limit: "1,000,000+", type: "Huge" },
     { name: "Gemini 2.5 Flash",     limit: "1,000,000+", type: "Huge" },
@@ -203,22 +234,16 @@ function runSTL() {
     { name: "Llama 4 Maverick",     limit: "1,000,000+", type: "Huge" },
     { name: "Qwen 2.5 1M",          limit: "1,000,000+", type: "Huge" },
     { name: "GPT-4.1",              limit: "1,000,000+", type: "Huge" },
-
-    // LARGE (≈ 200K–500K tokens)
     { name: "ChatGPT-5",            limit: "200,000+",   type: "Large" },
     { name: "Claude 4.5 Sonnet",    limit: "200,000+",   type: "Large" },
     { name: "Claude 4.5 Opus",      limit: "200,000+",   type: "Large" },
     { name: "Grok 4",               limit: "256,000",    type: "Large" },
     { name: "Cohere Command A",     limit: "256,000",    type: "Large" },
-
-    // MEDIUM (≈ 100K–150K tokens)
     { name: "GPT-4o",               limit: "128,000",    type: "Medium" },
     { name: "Llama 4 405B",         limit: "128,000",    type: "Medium" },
     { name: "DeepSeek V3",          limit: "128,000",    type: "Medium" },
     { name: "Grok 3",               limit: "128,000",    type: "Medium" },
     { name: "GPT-5 Mini",           limit: "128,000",    type: "Medium" },
-
-    // SMALL (< 50K tokens)
     { name: "ChatGPT (Free)",       limit: "~8,000",     type: "Small" },
     { name: "Claude Haiku",         limit: "~16,000",    type: "Small" },
   ];
@@ -233,7 +258,6 @@ function runSTL() {
 
   console.log(colors.dim('--------------------------------------------------'));
   console.log(colors.dim('* 1,000 tokens ≈ 750 words of code/text.'));
-  console.log(colors.dim('* Estimates based on latest model specs.\n'));
 }
 
 async function runBackup(flag: string) {
@@ -251,19 +275,17 @@ async function runBackup(flag: string) {
 async function runCopy() {
   console.log(colors.blue('Scanning directory...'));
   
-  // Use our new native scanner (Zero-dep fast-glob replacement)
   const files = await scanFiles(process.cwd());
-
   if (files.length === 0) return console.log(colors.red('Error: No files found.'));
 
-  let selectedFiles: string[] = [];
+  let selectedFiles;
   try {
     selectedFiles = await checkbox({
       message: 'Select files to send to AI:',
       choices: files.map(f => ({ name: f, value: f })),
       pageSize: 15, loop: false,
     });
-  } catch (e) { return console.log(colors.yellow('\nSelection cancelled.')); }
+  } catch { return console.log(colors.yellow('\nSelection cancelled.')); }
 
   if (selectedFiles.length === 0) return console.log(colors.yellow('No files selected.'));
 
@@ -279,16 +301,13 @@ async function runCopy() {
           skippedCount++; continue;
       }
 
-      // Read as buffer first to check for binaries
       const buffer = await fsPromises.readFile(file);
-      
       if (isBinary(buffer)) {
           console.log(colors.yellow(`⚠ Skipped binary file: ${file}`));
           skippedCount++; continue;
       }
 
       const content = buffer.toString('utf-8');
-
       if (file.includes('.env') || SECRET_REGEX.test(content)) {
           console.log(colors.red(`\n🛑 SECURITY ALERT: Secrets detected in ${file}`));
           skippedCount++; continue;
@@ -300,26 +319,23 @@ async function runCopy() {
   output += XML_SCHEMA_INSTRUCTION;
 
   try {
-    await clipboardy.write(output);
+    await writeClipboard(output);
     const tokens = estimateTokens(output);
     const finalCount = selectedFiles.length - skippedCount;
     const tokenColor = tokens > 100000 ? colors.red : tokens > 30000 ? colors.yellow : colors.green;
     
     console.log(colors.green(`\n✔ Copied ${finalCount} files to clipboard`));
     console.log(`Estimated Tokens: ${tokenColor(tokens.toLocaleString())}`);
-    
   } catch (e) { 
-      console.log(colors.red('❌ Clipboard write failed (File too large for OS).')); 
-      console.log(colors.dim('Try selecting fewer files.'));
+      console.log(colors.red('❌ Clipboard write failed (File too large for OS or tool missing).')); 
   }
 }
 
 async function runApply() {
   const backupsEnabled = await getBackupStatus();
   console.log(colors.dim('Reading clipboard...'));
-  
   let content;
-  try { content = await clipboardy.read(); } catch (e) { return console.log(colors.red('Error: Could not read clipboard.')); }
+  try { content = await readClipboard(); } catch (e) { return console.log(colors.red('Error: Could not read clipboard.')); }
 
   const cleanedContent = content.replace(/```xml/g, '').replace(/```/g, '');
   const fileRegex = /<file\s+path=["'](.*?)["']\s*>([\s\S]*?)<\/file>/gi;
@@ -383,7 +399,4 @@ async function runApply() {
   console.log(colors.cyan('\nDone.'));
 }
 
-// --- EXECUTE ---
-main().catch(() => {
-  process.exit(1);
-});
+main().catch(() => { process.exit(1); });
