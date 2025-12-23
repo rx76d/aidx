@@ -83,7 +83,6 @@ async function readClipboard(): Promise<string> {
   const platform = process.platform;
   try {
     if (platform === 'win32') {
-      // PowerShell is the reliable way to read on Windows without extra tools
       return execSync('powershell -command "Get-Clipboard"').toString().trim();
     } else if (platform === 'darwin') {
       return execSync('pbpaste').toString();
@@ -309,7 +308,7 @@ async function runCopy() {
 
       const content = buffer.toString('utf-8');
       if (file.includes('.env') || SECRET_REGEX.test(content)) {
-          console.log(colors.red(`\n🛑 SECURITY ALERT: Secrets detected in ${file}`));
+          console.log(colors.red(`\nSECURITY ALERT: Secrets detected in ${file}`));
           skippedCount++; continue;
       }
 
@@ -327,7 +326,7 @@ async function runCopy() {
     console.log(colors.green(`\n✔ Copied ${finalCount} files to clipboard`));
     console.log(`Estimated Tokens: ${tokenColor(tokens.toLocaleString())}`);
   } catch (e) { 
-      console.log(colors.red('❌ Clipboard write failed (File too large for OS or tool missing).')); 
+      console.log(colors.red('Clipboard write failed (File too large for OS or tool missing).')); 
   }
 }
 
