@@ -39,6 +39,7 @@
   "license": "MIT",
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
+    "clipboardy": "^4.0.0",
     "diff": "^5.2.0"
   },
   "devDependencies": {
