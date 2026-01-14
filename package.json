@@ -1,6 +1,6 @@
 {
   "name": "aidx",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A CLI bridge between local code and LLMs. Copy context to clipboard and apply AI changes safely with diffs.",
   "type": "module",
   "main": "dist/index.js",

@@ -11,7 +11,7 @@ const METADATA = {
   name: "aidx",
   description: "A CLI bridge between local code and LLMs.",
   author: "rx76d",
-  version: "1.0.5",
+  version: "1.0.6",
   license: "MIT",
   github: "https://github.com/rx76d/aidx"
 };
@@ -20,7 +20,7 @@ const CONFIG_FILE = '.aidxrc.json';
 const MAX_FILE_SIZE = 1.5 * 1024 * 1024; // 1.5MB Limit
 const SECRET_REGEX = /(?:sk-[a-zA-Z0-9]{32,})|(?:AKIA[0-9A-Z]{16})|(?:[a-zA-Z0-9+/]{40,}=)/;
 
-// --- UTILS: NATIVE COLORS ---
+// --- UTILS: NATIVE COLORS (Replaces Chalk) ---
 const colors = {
   reset: "\x1b[0m",
   red: (t: string) => `\x1b[31m${t}\x1b[0m`,
@@ -35,14 +35,15 @@ const colors = {
   bgGreen: (t: string) => `\x1b[42m\x1b[30m${t}\x1b[0m`
 };
 
-// --- UTILS: NATIVE FILE SCANNER ---
+// --- UTILS: NATIVE FILE SCANNER (Replaces fast-glob) ---
+// This recursively walks directories but explicitly skips ignored folders for speed.
 async function scanFiles(startDir: string): Promise<string[]> {
   const ignoredFolders = new Set([
     'node_modules', '.git', '.vscode', '.idea', 'dist', 'build', '.next', 
-    '__pycache__', 'venv', 'env', 'target', 'bin', 'obj', 'vendor', 
+    '__pycache__', 'venv', 'env', '.venv', 'target', 'bin', 'obj', 'vendor', 
     'Application Data', 'Cookies', 'Local Settings', 'Recent', 'Start Menu'
   ]);
-  
+
   const ignoredExts = new Set([
     '.lock', '.log', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', 
     '.pdf', '.zip', '.tar', '.gz', '.exe', '.dll', '.iso', '.class', '.pyc'
@@ -57,15 +58,21 @@ async function scanFiles(startDir: string): Promise<string[]> {
         const fullPath = path.join(dir, entry.name);
         
         if (entry.isDirectory()) {
-          if (!ignoredFolders.has(entry.name)) await walk(fullPath);
+          // Optimization: Don't enter ignored folders
+          if (!ignoredFolders.has(entry.name)) {
+            await walk(fullPath);
+          }
         } else {
           const ext = path.extname(entry.name).toLowerCase();
           if (!ignoredExts.has(ext)) {
+            // Store relative path
             results.push(path.relative(startDir, fullPath));
           }
         }
       }
-    } catch (e) { /* Suppress EPERM */ }
+    } catch (e) {
+      // Suppress permission errors (EPERM) just like suppressErrors: true
+    }
   }
 
   await walk(startDir);
@@ -89,11 +96,14 @@ async function getBackupStatus(): Promise<boolean> {
     const configPath = path.resolve(process.cwd(), CONFIG_FILE);
     const data = await fsPromises.readFile(configPath, 'utf-8');
     return !!JSON.parse(data).backup;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 async function setBackupStatus(enabled: boolean) {
-  await fsPromises.writeFile(path.resolve(process.cwd(), CONFIG_FILE), JSON.stringify({ backup: enabled }, null, 2));
+  const configPath = path.resolve(process.cwd(), CONFIG_FILE);
+  await fsPromises.writeFile(configPath, JSON.stringify({ backup: enabled }, null, 2));
 }
 
 // --- PROTOCOLS ---
@@ -123,18 +133,34 @@ console.log("Full code here...");
 ================================================================
 `;
 
-// --- MAIN CLI LOGIC ---
+// --- MAIN CLI LOGIC (Replaces Commander) ---
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || 'menu'; 
 
+  // Router
   switch (command) {
-    case 'copy': await runCopy(); break;
-    case 'apply': await runApply(); break;
-    case 'backup': await runBackup(args[1]); break;
-    case 'stl': runSTL(); break;
-    case 'menu': case '--help': case '-h': await showMenu(); break;
-    case '-v': case '--version': console.log(METADATA.version); break;
+    case 'copy':
+      await runCopy();
+      break;
+    case 'apply':
+      await runApply();
+      break;
+    case 'backup':
+      await runBackup(args[1]);
+      break;
+    case 'stl':
+      runSTL();
+      break;
+    case 'menu':
+    case '--help':
+    case '-h':
+      await showMenu();
+      break;
+    case '-v':
+    case '--version':
+      console.log(METADATA.version);
+      break;
     default:
       console.log(colors.red(`\nError: Unknown command '${command}'`));
       console.log(`Run ${colors.cyan('npx aidx')} for help.\n`);
@@ -162,7 +188,7 @@ async function showMenu() {
 }
 
 function runSTL() {
-  console.log('\n' + colors.bold('AI Model Context Limits (2025 Reference)'));
+  console.log('\n' + colors.bold('AI Model Context Limits (2026 Reference)'));
   console.log(colors.dim('--------------------------------------------------'));
   
   const models = [
@@ -259,7 +285,7 @@ async function runCopy() {
   output += XML_SCHEMA_INSTRUCTION;
 
   try {
-    await clipboardy.write(output); // Uses robust library
+    await clipboardy.write(output);
     const tokens = estimateTokens(output);
     const finalCount = selectedFiles.length - skippedCount;
     const tokenColor = tokens > 100000 ? colors.red : tokens > 30000 ? colors.yellow : colors.green;
@@ -275,7 +301,7 @@ async function runApply() {
   const backupsEnabled = await getBackupStatus();
   console.log(colors.dim('Reading clipboard...'));
   let content;
-  try { content = await clipboardy.read(); } catch (e) { // Uses robust library
+  try { content = await clipboardy.read(); } catch (e) { 
       console.log(colors.red(`Error: Could not read clipboard.`));
       return; 
   }
