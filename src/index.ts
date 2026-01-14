@@ -20,7 +20,7 @@ const CONFIG_FILE = '.aidxrc.json';
 const MAX_FILE_SIZE = 1.5 * 1024 * 1024; // 1.5MB Limit
 const SECRET_REGEX = /(?:sk-[a-zA-Z0-9]{32,})|(?:AKIA[0-9A-Z]{16})|(?:[a-zA-Z0-9+/]{40,}=)/;
 
-// --- UTILS: NATIVE COLORS (Replaces Chalk) ---
+// --- UTILS: NATIVE COLORS ---
 const colors = {
   reset: "\x1b[0m",
   red: (t: string) => `\x1b[31m${t}\x1b[0m`,
@@ -35,15 +35,14 @@ const colors = {
   bgGreen: (t: string) => `\x1b[42m\x1b[30m${t}\x1b[0m`
 };
 
-// --- UTILS: NATIVE FILE SCANNER (Replaces fast-glob) ---
-// This recursively walks directories but explicitly skips ignored folders for speed.
+// --- UTILS: NATIVE FILE SCANNER ---
 async function scanFiles(startDir: string): Promise<string[]> {
   const ignoredFolders = new Set([
     'node_modules', '.git', '.vscode', '.idea', 'dist', 'build', '.next', 
-    '__pycache__', 'venv', 'env', '.venv', 'target', 'bin', 'obj', 'vendor', 
+    '__pycache__', 'venv', 'env', 'target', 'bin', 'obj', 'vendor', 
     'Application Data', 'Cookies', 'Local Settings', 'Recent', 'Start Menu'
   ]);
-
+  
   const ignoredExts = new Set([
     '.lock', '.log', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', 
     '.pdf', '.zip', '.tar', '.gz', '.exe', '.dll', '.iso', '.class', '.pyc'
@@ -58,21 +57,15 @@ async function scanFiles(startDir: string): Promise<string[]> {
         const fullPath = path.join(dir, entry.name);
         
         if (entry.isDirectory()) {
-          // Optimization: Don't enter ignored folders
-          if (!ignoredFolders.has(entry.name)) {
-            await walk(fullPath);
-          }
+          if (!ignoredFolders.has(entry.name)) await walk(fullPath);
         } else {
           const ext = path.extname(entry.name).toLowerCase();
           if (!ignoredExts.has(ext)) {
-            // Store relative path
             results.push(path.relative(startDir, fullPath));
           }
         }
       }
-    } catch (e) {
-      // Suppress permission errors (EPERM) just like suppressErrors: true
-    }
+    } catch (e) { /* Suppress EPERM */ }
   }
 
   await walk(startDir);
@@ -96,71 +89,58 @@ async function getBackupStatus(): Promise<boolean> {
     const configPath = path.resolve(process.cwd(), CONFIG_FILE);
     const data = await fsPromises.readFile(configPath, 'utf-8');
     return !!JSON.parse(data).backup;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 async function setBackupStatus(enabled: boolean) {
-  const configPath = path.resolve(process.cwd(), CONFIG_FILE);
-  await fsPromises.writeFile(configPath, JSON.stringify({ backup: enabled }, null, 2));
+  await fsPromises.writeFile(path.resolve(process.cwd(), CONFIG_FILE), JSON.stringify({ backup: enabled }, null, 2));
 }
 
-// --- PROTOCOLS ---
+// --- PROTOCOLS (UPDATED) ---
 const SYSTEM_HEADER = `
 ================================================================
 SYSTEM PROMPT: STRICT CODE MODE
-You are an automated coding agent. You are NOT a chatbot.
-You do NOT converse. You do NOT use Markdown formatting (like \`\`\`).
-You ONLY output executable XML code changes.
+You are an automated coding agent.
+1. If you need to explain, put text inside <thought>...</thought> tags.
+2. For code changes, use <file path="...">...</file> tags.
+3. Do NOT use Markdown formatting (like \`\`\`) around the XML tags.
 ================================================================
 `;
 
 const XML_SCHEMA_INSTRUCTION = `
 \n\n
 ================================================================
-CRITICAL OUTPUT INSTRUCTIONS:
-1. You must output file changes inside <file> tags.
-2. The "path" attribute must match the file path exactly.
-3. **PROVIDE THE FULL FILE CONTENT.** Do not use placeholders like "// ... rest of code ...".
-4. Do NOT wrap the output in \`\`\`xml or \`\`\` blocks.
+OUTPUT INSTRUCTIONS:
 
-FORMAT EXAMPLE:
+1. EXPLANATION (Optional):
+<thought>
+I have updated the login function. 
+</thought>
+
+2. FILE EDITS:
 <file path="src/index.ts">
-import fs from 'fs';
-console.log("Full code here...");
+console.log("New Code");
 </file>
+
+3. DELETIONS:
+<delete path="src/old.ts" />
+
+CRITICAL: Provide the FULL content for any modified file.
 ================================================================
 `;
 
-// --- MAIN CLI LOGIC (Replaces Commander) ---
+// --- MAIN CLI LOGIC ---
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || 'menu'; 
 
-  // Router
   switch (command) {
-    case 'copy':
-      await runCopy();
-      break;
-    case 'apply':
-      await runApply();
-      break;
-    case 'backup':
-      await runBackup(args[1]);
-      break;
-    case 'stl':
-      runSTL();
-      break;
-    case 'menu':
-    case '--help':
-    case '-h':
-      await showMenu();
-      break;
-    case '-v':
-    case '--version':
-      console.log(METADATA.version);
-      break;
+    case 'copy': await runCopy(); break;
+    case 'apply': await runApply(); break;
+    case 'backup': await runBackup(args[1]); break;
+    case 'stl': runSTL(); break;
+    case 'menu': case '--help': case '-h': await showMenu(); break;
+    case '-v': case '--version': console.log(METADATA.version); break;
     default:
       console.log(colors.red(`\nError: Unknown command '${command}'`));
       console.log(`Run ${colors.cyan('npx aidx')} for help.\n`);
@@ -223,7 +203,6 @@ function runSTL() {
 
   console.log(colors.dim('--------------------------------------------------'));
   console.log(colors.dim('* 1,000 tokens ≈ 750 words of code/text.'));
-  console.log(colors.dim('* Estimates based on latest model specs.\n'));
 }
 
 async function runBackup(flag: string) {
@@ -306,6 +285,16 @@ async function runApply() {
       return; 
   }
 
+  // --- 1. PARSE THOUGHTS ---
+  const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
+  const thoughtMatch = thoughtRegex.exec(content);
+  if (thoughtMatch) {
+    console.log(colors.bold('\nAI Message:'));
+    console.log(colors.blue(thoughtMatch[1].trim()));
+    console.log(colors.dim('----------------------------------------'));
+  }
+
+  // --- 2. PARSE CODE ---
   const cleanedContent = content.replace(/```xml/g, '').replace(/```/g, '');
   const fileRegex = /<file\s+path=["'](.*?)["']\s*>([\s\S]*?)<\/file>/gi;
   const deleteRegex = /<delete\s+path=["'](.*?)["']\s*\/>/gi;
@@ -315,7 +304,10 @@ async function runApply() {
   while ((match = fileRegex.exec(cleanedContent)) !== null) updates.push({ type: 'write', path: match[1], content: match[2].trim() });
   while ((match = deleteRegex.exec(cleanedContent)) !== null) updates.push({ type: 'delete', path: match[1] });
 
-  if (updates.length === 0) return console.log(colors.red('\nNo valid XML tags found.'));
+  if (updates.length === 0) {
+    if (!thoughtMatch) console.log(colors.red('\nNo valid XML tags found.'));
+    return;
+  }
 
   console.log(colors.bold(`\nFound ${updates.length} pending change(s):\n`));
   for (const update of updates) {
