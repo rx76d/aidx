@@ -23,7 +23,7 @@
 
 ---
 
-## 📖 About
+## About
 
 **aidx** is a zero-config tool that turns your terminal into a context manager for ChatGPT, Claude, and Gemini.
 
@@ -33,7 +33,7 @@ It solves two problems:
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 No installation required. Run it instantly:
 
@@ -46,10 +46,8 @@ Or install globally for repeated use:
 npm install -g aidx
 ```
 
-## 🔄 How It Works
-1. **The Outbound Loop (Copying)**
-
-Select the files you want the AI to understand.
+## How It Works
+1. Select the files you want the AI to understand.
 ```
 npx aidx copy
 ```
@@ -58,8 +56,7 @@ npx aidx copy
 Result: Copies files + hidden system instructions to your clipboard.
 Next: Paste into ChatGPT/Claude.
 
-2. **The Inbound Loop (Applying):**
-When the AI replies with code, copy its entire response to your clipboard.
+2. When the AI replies with code, copy its entire response to your clipboard.
 ```
 npx aidx apply
 ```
@@ -68,7 +65,7 @@ npx aidx apply
 **Result:** Updates your files only after you confirm Yes.
 
 
-# 🎮 Commands
+# Commands
 
 Command	Description
 
@@ -88,27 +85,23 @@ Command	Description
 
 ```npx aidx -version```:	Displays current version.
 
-# ✨ Features
+# Features
 
-🛡️ **Security Guard**:
-Automatically detects and blocks API keys (AWS, OpenAI, Stripe) from being copied to the clipboard. If a file looks like a secret, it is skipped.
+**Security Guard**
+Automatically detects common API keys like AWS, OpenAI, and Stripe and blocks them from being copied. Files that look like they contain secrets are skipped.
 
-💾 **Automatic Backups**:
-Don't trust the AI completely? Turn on backups.
+**Automatic Backups**
 ```npx aidx backup --on```
-Before src/App.tsx is updated, aidx will save a copy to src/App.tsx.bak.
+aidx creates a .bak copy before modifying files, so you can easily roll back.
 
-🌍 **Universal Support**:
-Works with almost any text-based language:
-Web: TS, JS, HTML, CSS, Svelte, Vue, JSX
-Backend: Python, Go, Rust, Java, C#, PHP
-Config: JSON, YAML, TOML, SQL, Markdown
-Smart Ignores: Automatically ignores node_modules, .git, __pycache__, venv, target, bin, and binary files (.png, .exe).
+**Universal Support**
+Works with most text-based languages and formats, including TS, JS, Python, Go, Rust, Java, C#, PHP, JSON, YAML, SQL, and Markdown.
+It also automatically ignores things like node_modules, .git, venv, and binary files.
 
-📊 **Token Awareness**:
-Calculates estimated token usage before you paste, so you know if you are about to exceed the limits of GPT-5 or Claude 3.5.
+**Token Awareness**
+Estimates token usage before you paste so you know when you’re getting close to model limits.
 
-🛡️ **License**:
+**License**:
 This project is open source and available under the MIT License.
 <div align="center">
 <sub>Developed by rx76d</sub>
